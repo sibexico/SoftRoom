@@ -10,6 +10,7 @@ jobs:
   build-and-release:
     name: Build and Release
     runs-on: ubuntu-latest
+    # Grant permissions to create releases and delete old ones.
     permissions:
       contents: write
 
@@ -20,14 +21,21 @@ jobs:
       - name: Parse Version from Commit
         id: get_version
         run: |
+          # The full commit message is available in the github context
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           echo "Commit message: $COMMIT_MSG"
-          VERSION=$(echo "$COMMIT_MSG" | grep -oP '(\d+\.\d+\.\d+)')
+
+          # Use a regular expression to find the version number (e.g., 1.2.3)
+          # We add '|| true' to prevent the step from failing if grep finds no match.
+          VERSION=$(echo "$COMMIT_MSG" | grep -oP '(\d+\.\d+\.\d+)' || true)
+
+          # Check if the commit message contains the word "STABLE"
           IS_STABLE="false"
           if echo "$COMMIT_MSG" | grep -q "STABLE"; then
             IS_STABLE="true"
           fi
 
+          # If no version is found, we stop the workflow gracefully.
           if [ -z "$VERSION" ]; then
             echo "No version found in commit message. Skipping release."
             echo "VERSION=" >> $GITHUB_OUTPUT
@@ -37,12 +45,14 @@ jobs:
             echo "IS_STABLE=$IS_STABLE" >> $GITHUB_OUTPUT
           fi
 
+      # This step only runs if a version was successfully parsed from the commit.
       - name: Set up Go
         if: steps.get_version.outputs.VERSION != ''
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
+      # Build binaries for both Windows and Linux.
       - name: Build for Windows and Linux
         if: steps.get_version.outputs.VERSION != ''
         run: |
@@ -51,32 +61,42 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -o softroom-windows-amd64.exe
           echo "Build complete."
 
+      # Create a new GitHub Release and upload the binaries as assets.
       - name: Create GitHub Release
         if: steps.get_version.outputs.VERSION != ''
         uses: softprops/action-gh-release@v2
         with:
+          # The release tag will be vX.Y.Z (e.g., v0.0.1)
           tag_name: v${{ steps.get_version.outputs.VERSION }}
+          # The release name will include "(STABLE)" if the commit message had it.
           name: Release ${{ steps.get_version.outputs.VERSION }} ${{ steps.get_version.outputs.IS_STABLE == 'true' && '(STABLE)' || '' }}
           files: |
             softroom-linux-amd64
             softroom-windows-amd64.exe
 
+      # This step cleans up old releases based on your rules.
+      # It runs after the new release is created.
       - name: Prune Old Releases
         if: always() && steps.get_version.outputs.VERSION != ''
         env:
+          # The GITHUB_TOKEN is required for API access.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Pruning old releases..."
           
+          # Get lists of tags to keep using GitHub CLI and jq
           STABLE_TO_KEEP=$(gh release list --limit 100 --json name,tagName | jq -r '.[] | select(.name | contains("STABLE")) | .tagName' | head -n 1)
           RECENT_TO_KEEP=$(gh release list --limit 100 --json tagName,createdAt | jq -r 'sort_by(.createdAt) | reverse | .[].tagName' | head -n 2)
 
+          # Combine the lists and get a unique, sorted list of tags to keep
           KEEP_LIST=$(printf "%s\n%s" "$STABLE_TO_KEEP" "$RECENT_TO_KEEP" | sort -u)
           echo "Releases to keep:"
           echo "$KEEP_LIST"
           
+          # Get all versioned releases that are candidates for deletion
           ALL_RELEASES=$(gh release list --limit 100 --json tagName | jq -r '.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tagName')
 
+          # Loop through all releases and delete any that are not in our "keep" list
           for tag in $ALL_RELEASES; do
             if ! echo "$KEEP_LIST" | grep -q -w "$tag"; then
               echo "Deleting old release: $tag"
@@ -85,3 +105,4 @@ jobs:
           done
           
           echo "Cleanup complete."
+
