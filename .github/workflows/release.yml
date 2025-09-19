@@ -1,0 +1,87 @@
+# This workflow builds and releases the SoftRoom server on every push to the main branch.
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Parse Version from Commit
+        id: get_version
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          echo "Commit message: $COMMIT_MSG"
+          VERSION=$(echo "$COMMIT_MSG" | grep -oP '(\d+\.\d+\.\d+)')
+          IS_STABLE="false"
+          if echo "$COMMIT_MSG" | grep -q "STABLE"; then
+            IS_STABLE="true"
+          fi
+
+          if [ -z "$VERSION" ]; then
+            echo "No version found in commit message. Skipping release."
+            echo "VERSION=" >> $GITHUB_OUTPUT
+          else
+            echo "Version found: $VERSION"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "IS_STABLE=$IS_STABLE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Go
+        if: steps.get_version.outputs.VERSION != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build for Windows and Linux
+        if: steps.get_version.outputs.VERSION != ''
+        run: |
+          go mod tidy
+          GOOS=linux GOARCH=amd64 go build -o softroom-linux-amd64
+          GOOS=windows GOARCH=amd64 go build -o softroom-windows-amd64.exe
+          echo "Build complete."
+
+      - name: Create GitHub Release
+        if: steps.get_version.outputs.VERSION != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          name: Release ${{ steps.get_version.outputs.VERSION }} ${{ steps.get_version.outputs.IS_STABLE == 'true' && '(STABLE)' || '' }}
+          files: |
+            softroom-linux-amd64
+            softroom-windows-amd64.exe
+
+      - name: Prune Old Releases
+        if: always() && steps.get_version.outputs.VERSION != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Pruning old releases..."
+          
+          STABLE_TO_KEEP=$(gh release list --limit 100 --json name,tagName | jq -r '.[] | select(.name | contains("STABLE")) | .tagName' | head -n 1)
+          RECENT_TO_KEEP=$(gh release list --limit 100 --json tagName,createdAt | jq -r 'sort_by(.createdAt) | reverse | .[].tagName' | head -n 2)
+
+          KEEP_LIST=$(printf "%s\n%s" "$STABLE_TO_KEEP" "$RECENT_TO_KEEP" | sort -u)
+          echo "Releases to keep:"
+          echo "$KEEP_LIST"
+          
+          ALL_RELEASES=$(gh release list --limit 100 --json tagName | jq -r '.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tagName')
+
+          for tag in $ALL_RELEASES; do
+            if ! echo "$KEEP_LIST" | grep -q -w "$tag"; then
+              echo "Deleting old release: $tag"
+              gh release delete "$tag" --yes
+            fi
+          done
+          
+          echo "Cleanup complete."
