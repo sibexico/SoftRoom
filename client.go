@@ -8,25 +8,26 @@ import (
 )
 
 type Client struct {
-	hub     *Hub
-	user    string // GitHub username
-	session ssh.Session
-	send    chan Message
-	program *tea.Program // BubbleTea instance.
-
+	hub      *Hub
+	user     string // Username
+	isAuthed bool   // True if authenticated via GitHub
+	session  ssh.Session
+	send     chan Message
+	program  *tea.Program // BubbleTea instance.
 }
 
 func NewClient(session ssh.Session, hub *Hub, user string) *Client {
 	return &Client{
-		hub:     hub,
-		user:    user,
-		session: session,
-		send:    make(chan Message, 256),
+		hub:      hub,
+		user:     user,
+		isAuthed: false, // Users start as anonymous
+		session:  session,
+		send:     make(chan Message, 256),
 	}
 }
 
-func (c *Client) RunTUI(width, height int, welcomeMsg string) {
-	model := initialModel(c, width, height, welcomeMsg)
+func (c *Client) RunTUI(width, height int, welcomeMsg string, cfg *Config) {
+	model := initialModel(c, width, height, welcomeMsg, cfg)
 	c.program = tea.NewProgram(
 		model,
 		tea.WithInput(c.session),

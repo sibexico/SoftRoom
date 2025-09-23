@@ -8,13 +8,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gliderlabs/ssh"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 )
 
 // The "Device Flow" option should be enabled in the application settings on GitHub.
-func handleAuthentication(s ssh.Session, cfg *Config) (string, error) {
+func handleAuthentication(client *Client, cfg *Config) {
 	conf := &oauth2.Config{
 		ClientID: cfg.GitHubAuth.ClientID,
 		Scopes:   []string{"read:user"},
@@ -23,28 +22,32 @@ func handleAuthentication(s ssh.Session, cfg *Config) (string, error) {
 
 	code, err := conf.DeviceAuth(context.Background())
 	if err != nil {
-		return "", fmt.Errorf("could not get device code: %w", err)
+		client.send <- systemMessage(fmt.Sprintf("GitHub auth error: could not get device code: %v", err))
+		return
 	}
 
-	// Instructions to the user in the terminal
-	fmt.Fprintf(s, "To log in, please visit %s in your browser\n", code.VerificationURI)
-	fmt.Fprintf(s, "And enter the code: %s\n", code.UserCode)
-	fmt.Fprintln(s, "Waiting for authorization...")
+	// Instructions to the user in the TUI
+	client.send <- systemMessage(fmt.Sprintf("To log in, please visit %s in your browser", code.VerificationURI))
+	client.send <- systemMessage(fmt.Sprintf("And enter the code: %s", code.UserCode))
+	client.send <- systemMessage("Waiting for authorization...")
 
 	// Getting the access token
 	token, err := conf.DeviceAccessToken(context.Background(), code)
 	if err != nil {
-		return "", fmt.Errorf("failed to get access token: %w", err)
+		client.send <- systemMessage(fmt.Sprintf("GitHub auth error: failed to get access token: %v", err))
+		return
 	}
 
 	// Getting the username
-	fmt.Fprintln(s, "\nAuthentication successful! Fetching user info...")
+	client.send <- systemMessage("Authentication successful! Fetching user info...")
 	username, err := getGitHubUsername(token.AccessToken)
 	if err != nil {
-		return "", fmt.Errorf("could not fetch user info: %w", err)
+		client.send <- systemMessage(fmt.Sprintf("GitHub auth error: could not fetch user info: %v", err))
+		return
 	}
 
-	return username, nil
+	// Request the name change with high priority
+	client.hub.requestNameChange(client, username, true)
 }
 
 // Calling API by using the token to get actual username

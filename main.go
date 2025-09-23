@@ -37,18 +37,17 @@ func main() {
 			return
 		}
 
-		user, err := handleAuthentication(s, cfg)
-		if err != nil {
-			fmt.Fprintf(s, "Authentication failed: %v\n", err)
-			s.Close()
-			return
-		}
+		// Assign an anonymous name initially
+		initialName := generateAnonymousName()
+		client := NewClient(s, hub, initialName)
 
-		client := NewClient(s, hub, user)
+		// Send a welcome message with instructions for changing name or authenticating
+		welcomeText := fmt.Sprintf("Welcome, %s! Use /n <newname> to change your name, or /gh to authenticate with GitHub.", initialName)
+		client.send <- systemMessage(welcomeText)
 
 		hub.register <- client
 
-		client.RunTUI(pty.Window.Width, pty.Window.Height, cfg.Chat.WelcomeMessage)
+		client.RunTUI(pty.Window.Width, pty.Window.Height, cfg.Chat.WelcomeMessage, cfg)
 
 		hub.unregister <- client
 	}

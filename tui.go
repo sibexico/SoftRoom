@@ -18,16 +18,18 @@ type tuiModel struct {
 	client       *Client
 	viewport     viewport.Model
 	textarea     textarea.Model
-	senderStyle  lipgloss.Style // Chat message nicknames style
-	systemStyle  lipgloss.Style // Systen messages
+	senderStyle  lipgloss.Style // Chat message nicknames style (authenticated)
+	anonStyle    lipgloss.Style // Nickname style for anonymous users
+	systemStyle  lipgloss.Style // System messages
 	whisperStyle lipgloss.Style // Private messages
 	errorStyle   lipgloss.Style
 	err          error
 	welcome      string
+	config       *Config
 }
 
 // The initial state of the TUI.
-func initialModel(client *Client, width, height int, welcomeMsg string) tuiModel {
+func initialModel(client *Client, width, height int, welcomeMsg string, cfg *Config) tuiModel {
 	ta := textarea.New()
 	ta.Placeholder = "Send a message... (/h for help)"
 	ta.Focus()
@@ -36,17 +38,19 @@ func initialModel(client *Client, width, height int, welcomeMsg string) tuiModel
 	ta.SetWidth(width)
 
 	vp := viewport.New(width, height-ta.Height())
-	vp.SetContent("Welcome to SoftRoom-based chat!")
+	vp.SetContent("Welcome to SoftRoom!") // Generic welcome, specific one is sent via system message
 
 	return tuiModel{
 		client:       client,
 		textarea:     ta,
 		viewport:     vp,
-		senderStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("2")),  // Green
-		systemStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("11")), // Yellow
-		whisperStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("13")), // Magenta
-		errorStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("9")),  // Red
+		senderStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("2")),   // Green
+		anonStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("240")), // Gray
+		systemStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // Yellow
+		whisperStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("13")),  // Magenta
+		errorStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // Red
 		welcome:      welcomeMsg,
+		config:       cfg,
 	}
 }
 
@@ -76,7 +80,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.textarea.Reset()
 
-			responseMsg, isCmd := handleCommand(m.client, input)
+			responseMsg, isCmd := handleCommand(m.client, input, m.config)
 			if isCmd {
 				if responseMsg.Content != "" {
 					return m, func() tea.Msg {
@@ -87,9 +91,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.client.hub.broadcast <- Message{
-				Author:  m.client.user,
-				Content: input,
-				Type:    "public",
+				Author:         m.client.user,
+				Content:        input,
+				Type:           "public",
+				AuthorIsAuthed: m.client.isAuthed,
 			}
 			return m, nil
 		}
@@ -104,7 +109,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "public":
 			fallthrough
 		default:
-			author := m.senderStyle.Render(msg.Author)
+			var author string
+			if msg.AuthorIsAuthed {
+				author = m.senderStyle.Render(msg.Author)
+			} else {
+				author = m.anonStyle.Render(fmt.Sprintf("[anon] %s", msg.Author))
+			}
 			newContent = fmt.Sprintf("[%s] %s: %s", time.Now().Format("15:04"), author, msg.Content)
 		}
 
