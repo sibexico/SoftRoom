@@ -26,6 +26,9 @@ type Config struct {
 	Chat struct {
 		WelcomeMessage string `ini:"welcome_message"`
 	} `ini:"chat"`
+	Federation struct {
+		Servers []string `ini:"servers,omitempty,allowshadow"`
+	} `ini:"federation"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -71,6 +74,10 @@ client_id = YOUR_GITHUB_OAUTH_CLIENT_ID
 [chat]
 ; The message displayed to users after they successfully log in.
 welcome_message = Welcome to SoftRoom based group chat!
+
+[federation]
+; A list of other SoftRoom servers to connect to.
+; servers = host:port, anotherhost:port
 `
 	return os.WriteFile(path, []byte(strings.TrimSpace(content)), 0644)
 }

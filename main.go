@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -13,12 +15,15 @@ import (
 )
 
 func main() {
-	cfg, err := LoadConfig("softroom.ini")
+	configPath := flag.String("c", "softroom.ini", "path to config file")
+	flag.Parse()
+
+	cfg, err := LoadConfig(*configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Println("Config file not found. Creating a default 'softroom.ini'.")
+			log.Printf("Config file not found at %s. Creating a default one.", *configPath)
 			log.Println("Please edit it with your GitHub OAuth Client ID.")
-			if err := CreateDefaultConfig("softroom.ini"); err != nil {
+			if err := CreateDefaultConfig(*configPath); err != nil {
 				log.Fatalf("Failed to create default config: %v", err)
 			}
 			os.Exit(1)
@@ -27,9 +32,29 @@ func main() {
 	}
 
 	hub := newHub()
+	federation := NewFederation(hub, cfg.Federation.Servers)
+	hub.federation = federation
 	go hub.run()
 
+	federation.Start()
+
 	sshHandler := func(s ssh.Session) {
+		if s.User() == "federation" {
+			hub.federation.HandleNewServer(s)
+			return
+		}
+
+		lang := ""
+		for _, env := range s.Environ() {
+			if strings.HasPrefix(env, "LANG=") {
+				lang = strings.TrimPrefix(env, "LANG=")
+				break
+			}
+		}
+		if !strings.Contains(strings.ToLower(lang), "utf-8") && !strings.Contains(strings.ToLower(lang), "utf8") {
+			fmt.Fprintln(s, "Warning: Your client does not appear to support UTF-8. Non-ASCII characters may not be displayed correctly.")
+		}
+
 		pty, _, active := s.Pty()
 		if !active {
 			fmt.Fprintln(s, "A PTY is required to run SoftRoom.")
@@ -37,13 +62,12 @@ func main() {
 			return
 		}
 
-		// Assign an anonymous name initially
 		initialName := generateAnonymousName()
-		client := NewClient(s, hub, initialName)
+		client := NewClient(s, hub, "")
+		client.SetUser(initialName)
 
-		// Send a welcome message with instructions for changing name or authenticating
 		welcomeText := fmt.Sprintf("Welcome, %s! Use /n <newname> to change your name, or /gh to authenticate with GitHub.", initialName)
-		client.send <- systemMessage(welcomeText)
+		client.send <- SystemMessage(welcomeText)
 
 		hub.register <- client
 
@@ -55,7 +79,6 @@ func main() {
 		Addr:    fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler: sshHandler,
 		PtyCallback: func(ctx ssh.Context, pty ssh.Pty) bool {
-			// Always accept PTY requests
 			return true
 		},
 		HostSigners: []ssh.Signer{

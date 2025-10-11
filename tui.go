@@ -91,10 +91,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.client.hub.broadcast <- Message{
-				Author:         m.client.user,
+				Author:         m.client.User(),
 				Content:        input,
 				Type:           "public",
-				AuthorIsAuthed: m.client.isAuthed,
+				AuthorIsAuthed: m.client.IsAuthed(),
 			}
 			return m, nil
 		}

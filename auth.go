@@ -22,27 +22,27 @@ func handleAuthentication(client *Client, cfg *Config) {
 
 	code, err := conf.DeviceAuth(context.Background())
 	if err != nil {
-		client.send <- systemMessage(fmt.Sprintf("GitHub auth error: could not get device code: %v", err))
+		client.send <- SystemMessage(fmt.Sprintf("GitHub auth error: could not get device code: %v", err))
 		return
 	}
 
 	// Instructions to the user in the TUI
-	client.send <- systemMessage(fmt.Sprintf("To log in, please visit %s in your browser", code.VerificationURI))
-	client.send <- systemMessage(fmt.Sprintf("And enter the code: %s", code.UserCode))
-	client.send <- systemMessage("Waiting for authorization...")
+	client.send <- SystemMessage(fmt.Sprintf("To log in, please visit %s in your browser", code.VerificationURI))
+	client.send <- SystemMessage(fmt.Sprintf("And enter the code: %s", code.UserCode))
+	client.send <- SystemMessage("Waiting for authorization...")
 
 	// Getting the access token
 	token, err := conf.DeviceAccessToken(context.Background(), code)
 	if err != nil {
-		client.send <- systemMessage(fmt.Sprintf("GitHub auth error: failed to get access token: %v", err))
+		client.send <- SystemMessage(fmt.Sprintf("GitHub auth error: failed to get access token: %v", err))
 		return
 	}
 
 	// Getting the username
-	client.send <- systemMessage("Authentication successful! Fetching user info...")
+	client.send <- SystemMessage("Authentication successful! Fetching user info...")
 	username, err := getGitHubUsername(token.AccessToken)
 	if err != nil {
-		client.send <- systemMessage(fmt.Sprintf("GitHub auth error: could not fetch user info: %v", err))
+		client.send <- SystemMessage(fmt.Sprintf("GitHub auth error: could not fetch user info: %v", err))
 		return
 	}
 
