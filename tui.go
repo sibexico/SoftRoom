@@ -18,6 +18,7 @@ type tuiModel struct {
 	client       *Client
 	viewport     viewport.Model
 	textarea     textarea.Model
+	lines        []string
 	senderStyle  lipgloss.Style // Chat message nicknames style (authenticated)
 	anonStyle    lipgloss.Style // Nickname style for anonymous users
 	systemStyle  lipgloss.Style // System messages
@@ -38,12 +39,13 @@ func initialModel(client *Client, width, height int, welcomeMsg string, cfg *Con
 	ta.SetWidth(width)
 
 	vp := viewport.New(width, height-ta.Height())
-	vp.SetContent("Welcome to SoftRoom!") // Generic welcome, specific one is sent via system message
+	vp.SetContent("Welcome to SoftRoom!")
 
 	return tuiModel{
 		client:       client,
 		textarea:     ta,
 		viewport:     vp,
+		lines:        []string{"Welcome to SoftRoom!"},
 		senderStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("2")),   // Green
 		anonStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("240")), // Gray
 		systemStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // Yellow
@@ -118,7 +120,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newContent = fmt.Sprintf("[%s] %s: %s", time.Now().Format("15:04"), author, msg.Content)
 		}
 
-		m.viewport.SetContent(m.viewport.View() + "\n" + newContent)
+		m.lines = append(m.lines, newContent)
+		m.viewport.SetContent(strings.Join(m.lines, "\n"))
 		m.viewport.GotoBottom()
 		return m, nil
 

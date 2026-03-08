@@ -2,11 +2,8 @@ package main
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 )
-
-var validUsernameRegex = regexp.MustCompile("^[a-zA-Z0-9_-]{3,20}$")
 
 func handleCommand(c *Client, input string, cfg *Config) (Message, bool) {
 	if !strings.HasPrefix(input, "/") {
@@ -45,9 +42,9 @@ func handleCommand(c *Client, input string, cfg *Config) (Message, bool) {
 		if len(parts) < 2 {
 			responseMsg = SystemMessage("Usage: /n <newname>")
 		} else {
-			newName := parts[1]
-			if !validUsernameRegex.MatchString(newName) {
-				responseMsg = SystemMessage("Invalid name. Use 3-20 alphanumeric characters, underscores, or hyphens.")
+			newName := normalizeUsername(parts[1])
+			if !isValidUsername(newName) {
+				responseMsg = SystemMessage("Invalid name. Use 3-20 characters: letters/digits from any language, '_' or '-'.")
 			} else {
 				c.hub.requestNameChange(c, newName, false)
 				// The hub will send feedback directly to the client.
@@ -64,7 +61,7 @@ func handleCommand(c *Client, input string, cfg *Config) (Message, bool) {
 		if len(parts) < 3 {
 			responseMsg = SystemMessage("Usage: /w <username> <message>")
 		} else {
-			targetUser := parts[1]
+			targetUser := normalizeUsername(parts[1])
 			content := strings.Join(parts[2:], " ")
 			msg := Message{
 				Author:  c.User(),

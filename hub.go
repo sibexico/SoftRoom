@@ -85,7 +85,7 @@ func (h *Hub) getLocalUserList() []string {
 
 func (h *Hub) sendPrivateMessage(targetUser string, msg Message, sender *Client) {
 	payload := privateMessagePayload{
-		TargetUser: targetUser,
+		TargetUser: normalizeUsername(targetUser),
 		Message:    msg,
 		Sender:     sender,
 	}
@@ -93,6 +93,7 @@ func (h *Hub) sendPrivateMessage(targetUser string, msg Message, sender *Client)
 }
 
 func (h *Hub) findServerForNick(nick string) (string, bool) {
+	nick = normalizeUsername(nick)
 	for serverAddr, nicks := range h.remoteNicks {
 		for _, n := range nicks {
 			if n == nick {
@@ -104,6 +105,7 @@ func (h *Hub) findServerForNick(nick string) (string, bool) {
 }
 
 func (h *Hub) isNameTakenInFederation(name string) bool {
+	name = normalizeUsername(name)
 	// Check local clients
 	if _, exists := h.clientsByName[name]; exists {
 		return true
@@ -123,7 +125,7 @@ func (h *Hub) isNameTakenInFederation(name string) bool {
 func (h *Hub) requestNameChange(client *Client, newName string, isGitHubAuth bool) {
 	h.changeName <- nameChangeRequest{
 		client:       client,
-		newName:      newName,
+		newName:      normalizeUsername(newName),
 		isGitHubAuth: isGitHubAuth,
 	}
 }
@@ -205,6 +207,7 @@ func (h *Hub) run() {
 			if found {
 				if pMsg.Sender != nil && targetClient == pMsg.Sender {
 					pMsg.Sender.send <- Message{Type: "system", Content: "You can't send a message to yourself."}
+					h.mu.RUnlock()
 					continue
 				}
 
@@ -322,17 +325,23 @@ func (h *Hub) run() {
 			}
 		case req := <-h.syncNicks:
 			h.mu.Lock()
+			normalizedNicks := make([]string, 0, len(req.nicks))
+			for _, nick := range req.nicks {
+				normalizedNicks = append(normalizedNicks, normalizeUsername(nick))
+			}
 			// Check for name conflicts before updating
-			for _, newNick := range req.nicks {
+			for _, newNick := range normalizedNicks {
 				// Skip if the nick is from the same server we're updating
 				if currentServer, exists := h.findServerForNick(newNick); exists && currentServer != req.serverAddr {
 					log.Printf("Warning: User %s exists on multiple servers (%s and %s)", newNick, currentServer, req.serverAddr)
 				}
 			}
-			h.remoteNicks[req.serverAddr] = req.nicks
+			h.remoteNicks[req.serverAddr] = normalizedNicks
 			h.mu.Unlock()
 
 		case req := <-h.remoteNameChange:
+			req.oldName = normalizeUsername(req.oldName)
+			req.newName = normalizeUsername(req.newName)
 			h.mu.Lock()
 			for i, nick := range h.remoteNicks[req.serverAddr] {
 				if nick == req.oldName {

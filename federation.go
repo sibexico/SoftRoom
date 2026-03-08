@@ -211,6 +211,11 @@ func (sc *ServerConnection) startNickSync(stdin io.Writer) {
 }
 
 func (sc *ServerConnection) sendNickSync(stdin io.Writer) {
+	if stdin == nil {
+		log.Printf("Skipping nick sync for %s: connection is not ready", sc.addr)
+		return
+	}
+
 	nicks := sc.hub.getLocalUserList()
 	payload := NickSyncPayload{Nicks: nicks}
 	b, err := json.Marshal(payload)
@@ -230,6 +235,11 @@ func (sc *ServerConnection) sendNickSync(stdin io.Writer) {
 }
 
 func (sc *ServerConnection) sendPrivateMessage(from, to, text string) {
+	if sc.stdin == nil {
+		log.Printf("Skipping private message to %s via %s: connection is not ready", to, sc.addr)
+		return
+	}
+
 	payload := PrivateMessagePayload{From: from, To: to, Text: text}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -248,6 +258,11 @@ func (sc *ServerConnection) sendPrivateMessage(from, to, text string) {
 }
 
 func (sc *ServerConnection) sendNameChange(oldName, newName string, isGitHubAuth bool) {
+	if sc.stdin == nil {
+		log.Printf("Skipping name change broadcast to %s: connection is not ready", sc.addr)
+		return
+	}
+
 	payload := NameChangePayload{OldName: oldName, NewName: newName, IsGitHubAuth: isGitHubAuth}
 	b, err := json.Marshal(payload)
 	if err != nil {

@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -44,17 +43,6 @@ func main() {
 			return
 		}
 
-		lang := ""
-		for _, env := range s.Environ() {
-			if strings.HasPrefix(env, "LANG=") {
-				lang = strings.TrimPrefix(env, "LANG=")
-				break
-			}
-		}
-		if !strings.Contains(strings.ToLower(lang), "utf-8") && !strings.Contains(strings.ToLower(lang), "utf8") {
-			fmt.Fprintln(s, "Warning: Your client does not appear to support UTF-8. Non-ASCII characters may not be displayed correctly.")
-		}
-
 		pty, _, active := s.Pty()
 		if !active {
 			fmt.Fprintln(s, "A PTY is required to run SoftRoom.")
@@ -62,8 +50,13 @@ func main() {
 			return
 		}
 
+		sio := buildSessionIO(s)
+		if !sio.charsetKnown {
+			fmt.Fprintln(s, "Warning: Unknown terminal charset. Set LANG/LC_CTYPE to UTF-8 for correct non-Latin messages.")
+		}
+
 		initialName := generateAnonymousName()
-		client := NewClient(s, hub, "")
+		client := NewClient(s, hub, "", sio.input, sio.output)
 		client.SetUser(initialName)
 
 		welcomeText := fmt.Sprintf("Welcome, %s! Use /n <newname> to change your name, or /gh to authenticate with GitHub.", initialName)
