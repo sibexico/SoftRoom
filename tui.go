@@ -102,22 +102,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case incomingMessageMsg:
+		safeContent := sanitizeForTerminal(msg.Content)
+		safeAuthor := sanitizeForTerminal(msg.Author)
+
 		var newContent string
 		switch msg.Type {
 		case "private":
-			newContent = m.whisperStyle.Render(fmt.Sprintf("[%s] %s", time.Now().Format("15:04"), msg.Content))
+			newContent = m.whisperStyle.Render(fmt.Sprintf("[%s] %s", time.Now().Format("15:04"), safeContent))
 		case "system":
-			newContent = m.systemStyle.Render(fmt.Sprintf("[%s] %s", time.Now().Format("15:04"), msg.Content))
+			newContent = m.systemStyle.Render(fmt.Sprintf("[%s] %s", time.Now().Format("15:04"), safeContent))
 		case "public":
 			fallthrough
 		default:
 			var author string
 			if msg.AuthorIsAuthed {
-				author = m.senderStyle.Render(msg.Author)
+				author = m.senderStyle.Render(safeAuthor)
 			} else {
-				author = m.anonStyle.Render(fmt.Sprintf("[anon] %s", msg.Author))
+				author = m.anonStyle.Render(fmt.Sprintf("[anon] %s", safeAuthor))
 			}
-			newContent = fmt.Sprintf("[%s] %s: %s", time.Now().Format("15:04"), author, msg.Content)
+			newContent = fmt.Sprintf("[%s] %s: %s", time.Now().Format("15:04"), author, safeContent)
 		}
 
 		m.lines = append(m.lines, newContent)

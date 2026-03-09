@@ -130,6 +130,23 @@ func (h *Hub) requestNameChange(client *Client, newName string, isGitHubAuth boo
 	}
 }
 
+func (h *Hub) sendToClient(client *Client, msg Message) bool {
+	if client == nil {
+		return false
+	}
+
+	select {
+	case client.send <- msg:
+		return true
+	default:
+		log.Printf("client %s send channel full, disconnecting", client.User())
+		close(client.send)
+		delete(h.clients, client)
+		delete(h.clientsByName, client.User())
+		return false
+	}
+}
+
 func (h *Hub) run() {
 	for {
 		select {
@@ -146,14 +163,7 @@ func (h *Hub) run() {
 			log.Printf("Client registered: %s", client.User())
 			joinMsg := Message{Author: "System", Content: client.User() + " has joined.", Type: "system"}
 			for c := range h.clients {
-				select {
-				case c.send <- joinMsg:
-				default:
-					log.Printf("client %s send channel full, disconnecting", c.User())
-					close(c.send)
-					delete(h.clients, c)
-					delete(h.clientsByName, c.User())
-				}
+				h.sendToClient(c, joinMsg)
 			}
 
 		case client := <-h.unregister:
@@ -164,23 +174,14 @@ func (h *Hub) run() {
 				log.Printf("Client unregistered: %s", client.User())
 				leaveMsg := Message{Author: "System", Content: client.User() + " has left.", Type: "system"}
 				for c := range h.clients {
-					c.send <- leaveMsg
+					h.sendToClient(c, leaveMsg)
 				}
 			}
 
 		case message := <-h.broadcast:
-			h.mu.RLock()
 			for client := range h.clients {
-				select {
-				case client.send <- message:
-				default:
-					log.Printf("client %s send channel full, disconnecting", client.User())
-					close(client.send)
-					delete(h.clients, client)
-					delete(h.clientsByName, client.User())
-				}
+				h.sendToClient(client, message)
 			}
-			h.mu.RUnlock()
 
 		case respChan := <-h.requestUsers:
 			var users []string
@@ -206,7 +207,7 @@ func (h *Hub) run() {
 			targetClient, found := h.clientsByName[pMsg.TargetUser]
 			if found {
 				if pMsg.Sender != nil && targetClient == pMsg.Sender {
-					pMsg.Sender.send <- Message{Type: "system", Content: "You can't send a message to yourself."}
+					h.sendToClient(pMsg.Sender, Message{Type: "system", Content: "You can't send a message to yourself."})
 					h.mu.RUnlock()
 					continue
 				}
@@ -215,14 +216,14 @@ func (h *Hub) run() {
 					Type:    "private",
 					Content: fmt.Sprintf("(from %s): %s", pMsg.Message.Author, pMsg.Message.Content),
 				}
-				targetClient.send <- targetMsg
+				h.sendToClient(targetClient, targetMsg)
 
 				if pMsg.Sender != nil {
 					senderConfirmMsg := Message{
 						Type:    "private",
 						Content: fmt.Sprintf("(to %s): %s", pMsg.TargetUser, pMsg.Message.Content),
 					}
-					pMsg.Sender.send <- senderConfirmMsg
+					h.sendToClient(pMsg.Sender, senderConfirmMsg)
 				}
 			} else {
 				// Check remote users
@@ -247,7 +248,7 @@ func (h *Hub) run() {
 					}
 				}
 				if !foundRemote && pMsg.Sender != nil {
-					pMsg.Sender.send <- Message{Type: "system", Content: fmt.Sprintf("User '%s' not found.", pMsg.TargetUser)}
+					h.sendToClient(pMsg.Sender, Message{Type: "system", Content: fmt.Sprintf("User '%s' not found.", pMsg.TargetUser)})
 				}
 			}
 			h.mu.RUnlock()
@@ -272,7 +273,7 @@ func (h *Hub) run() {
 					h.clientsByName[newAnonName] = existingClient
 					existingClient.SetUser(newAnonName)
 					existingClient.SetIsAuthed(false) // Reset auth status
-					existingClient.send <- SystemMessage(fmt.Sprintf("Your name was changed to %s because an authenticating user claimed the name '%s'.", newAnonName, kickedUserOldName))
+					h.sendToClient(existingClient, SystemMessage(fmt.Sprintf("Your name was changed to %s because an authenticating user claimed the name '%s'.", newAnonName, kickedUserOldName)))
 
 					// Now the name is free, proceed to update the authenticating user
 					oldAuthName := req.client.User()
@@ -285,8 +286,8 @@ func (h *Hub) run() {
 					broadcastMsg1 := SystemMessage(fmt.Sprintf("%s has been renamed to %s.", kickedUserOldName, newAnonName))
 					broadcastMsg2 := SystemMessage(fmt.Sprintf("%s has authenticated and is now known as %s.", oldAuthName, req.newName))
 					for c := range h.clients {
-						c.send <- broadcastMsg1
-						c.send <- broadcastMsg2
+						h.sendToClient(c, broadcastMsg1)
+						h.sendToClient(c, broadcastMsg2)
 					}
 
 					// Notify federation about the changes
@@ -295,7 +296,7 @@ func (h *Hub) run() {
 
 				} else {
 					// Normal name change, name is taken. Reject.
-					req.client.send <- SystemMessage(fmt.Sprintf("Name '%s' is already taken.", req.newName))
+					h.sendToClient(req.client, SystemMessage(fmt.Sprintf("Name '%s' is already taken.", req.newName)))
 				}
 			} else {
 				// Name is not taken or user is re-setting their own name.
@@ -318,7 +319,7 @@ func (h *Hub) run() {
 				// Broadcast the change.
 				broadcastMsg := SystemMessage(fmt.Sprintf("%s is now known as %s.", oldName, req.newName))
 				for c := range h.clients {
-					c.send <- broadcastMsg
+					h.sendToClient(c, broadcastMsg)
 				}
 
 				h.federation.BroadcastNameChange(oldName, req.newName, req.isGitHubAuth)
@@ -365,7 +366,7 @@ func (h *Hub) run() {
 					h.clientsByName[newAnonName] = client
 					client.SetUser(newAnonName)
 					client.SetIsAuthed(false)
-					client.send <- SystemMessage(fmt.Sprintf("Your name was changed to %s because an authenticating user claimed the name '%s'.", newAnonName, kickedUserOldName))
+					h.sendToClient(client, SystemMessage(fmt.Sprintf("Your name was changed to %s because an authenticating user claimed the name '%s'.", newAnonName, kickedUserOldName)))
 					h.federation.BroadcastNameChange(kickedUserOldName, newAnonName, false)
 				}
 			}

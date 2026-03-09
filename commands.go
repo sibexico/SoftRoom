@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 func handleCommand(c *Client, input string, cfg *Config) (Message, bool) {
@@ -53,7 +54,17 @@ func handleCommand(c *Client, input string, cfg *Config) (Message, bool) {
 		}
 
 	case "/gh":
-		c.send <- SystemMessage("Starting GitHub authentication...")
+		ok, wait := c.StartAuthAttempt(10 * time.Second)
+		if !ok {
+			if wait > 0 {
+				c.EnqueueMessage(SystemMessage(fmt.Sprintf("Please wait %s before retrying GitHub authentication.", wait.Round(time.Second))))
+			} else {
+				c.EnqueueMessage(SystemMessage("GitHub authentication is already in progress."))
+			}
+			return Message{}, true
+		}
+
+		c.EnqueueMessage(SystemMessage("Starting GitHub authentication..."))
 		go handleAuthentication(c, cfg)
 		return Message{}, true
 

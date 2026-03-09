@@ -27,7 +27,9 @@ type Config struct {
 		WelcomeMessage string `ini:"welcome_message"`
 	} `ini:"chat"`
 	Federation struct {
-		Servers []string `ini:"servers,omitempty,allowshadow"`
+		Servers        []string `ini:"servers,omitempty,allowshadow"`
+		KnownHostsPath string   `ini:"known_hosts_path"`
+		SharedSecret   string   `ini:"shared_secret"`
 	} `ini:"federation"`
 }
 
@@ -38,6 +40,7 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Server.Port = 2222
 	cfg.Server.HostKeyPath = "./id_rsa"
 	cfg.Chat.WelcomeMessage = "Welcome to SoftRoom!"
+	cfg.Federation.KnownHostsPath = "./federation_known_hosts"
 
 	// MapTo will load the file and override defaults
 	err := ini.MapTo(cfg, path)
@@ -47,6 +50,10 @@ func LoadConfig(path string) (*Config, error) {
 
 	if cfg.GitHubAuth.ClientID == "" {
 		return nil, fmt.Errorf("`client_id` in section `github_auth` must be set in %s", path)
+	}
+
+	if len(cfg.Federation.Servers) > 0 && strings.TrimSpace(cfg.Federation.SharedSecret) == "" {
+		return nil, fmt.Errorf("`shared_secret` in section `federation` must be set when federation servers are configured")
 	}
 
 	return cfg, nil
@@ -78,8 +85,12 @@ welcome_message = Welcome to SoftRoom based group chat!
 [federation]
 ; A list of other SoftRoom servers to connect to.
 ; servers = host:port, anotherhost:port
+; Path to SSH known_hosts file for federation peers.
+known_hosts_path = ./federation_known_hosts
+; Shared secret used to authenticate federation messages between trusted servers.
+shared_secret = CHANGE_ME_TO_A_LONG_RANDOM_SECRET
 `
-	return os.WriteFile(path, []byte(strings.TrimSpace(content)), 0644)
+	return os.WriteFile(path, []byte(strings.TrimSpace(content)), 0600)
 }
 
 func getHostKey(path string) ssh.Signer {

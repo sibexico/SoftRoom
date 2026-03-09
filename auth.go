@@ -14,35 +14,43 @@ import (
 
 // The "Device Flow" option should be enabled in the application settings on GitHub.
 func handleAuthentication(client *Client, cfg *Config) {
+	defer client.FinishAuthAttempt()
+
 	conf := &oauth2.Config{
 		ClientID: cfg.GitHubAuth.ClientID,
 		Scopes:   []string{"read:user"},
 		Endpoint: github.Endpoint,
 	}
 
-	code, err := conf.DeviceAuth(context.Background())
+	deviceCtx, cancelDevice := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelDevice()
+
+	code, err := conf.DeviceAuth(deviceCtx)
 	if err != nil {
-		client.send <- SystemMessage(fmt.Sprintf("GitHub auth error: could not get device code: %v", err))
+		client.EnqueueMessage(SystemMessage(fmt.Sprintf("GitHub auth error: could not get device code: %v", err)))
 		return
 	}
 
 	// Instructions to the user in the TUI
-	client.send <- SystemMessage(fmt.Sprintf("To log in, please visit %s in your browser", code.VerificationURI))
-	client.send <- SystemMessage(fmt.Sprintf("And enter the code: %s", code.UserCode))
-	client.send <- SystemMessage("Waiting for authorization...")
+	client.EnqueueMessage(SystemMessage(fmt.Sprintf("To log in, please visit %s in your browser", code.VerificationURI)))
+	client.EnqueueMessage(SystemMessage(fmt.Sprintf("And enter the code: %s", code.UserCode)))
+	client.EnqueueMessage(SystemMessage("Waiting for authorization..."))
 
 	// Getting the access token
-	token, err := conf.DeviceAccessToken(context.Background(), code)
+	pollCtx, cancelPoll := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancelPoll()
+
+	token, err := conf.DeviceAccessToken(pollCtx, code)
 	if err != nil {
-		client.send <- SystemMessage(fmt.Sprintf("GitHub auth error: failed to get access token: %v", err))
+		client.EnqueueMessage(SystemMessage(fmt.Sprintf("GitHub auth error: failed to get access token: %v", err)))
 		return
 	}
 
 	// Getting the username
-	client.send <- SystemMessage("Authentication successful! Fetching user info...")
+	client.EnqueueMessage(SystemMessage("Authentication successful! Fetching user info..."))
 	username, err := getGitHubUsername(token.AccessToken)
 	if err != nil {
-		client.send <- SystemMessage(fmt.Sprintf("GitHub auth error: could not fetch user info: %v", err))
+		client.EnqueueMessage(SystemMessage(fmt.Sprintf("GitHub auth error: could not fetch user info: %v", err)))
 		return
 	}
 
@@ -68,6 +76,10 @@ func getGitHubUsername(token string) (string, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github api returned status %d", resp.StatusCode)
 	}
 
 	var user struct {

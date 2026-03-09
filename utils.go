@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -14,6 +15,8 @@ import (
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }
+
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 func generateAnonymousName() string {
 	return fmt.Sprintf("Anonymous%04d", rand.Intn(10000))
@@ -41,4 +44,24 @@ func isValidUsername(name string) bool {
 	}
 
 	return true
+}
+
+func sanitizeForTerminal(input string) string {
+	cleaned := ansiEscapePattern.ReplaceAllString(input, "")
+
+	var b strings.Builder
+	b.Grow(len(cleaned))
+
+	for _, r := range cleaned {
+		if r == '\n' || r == '\t' {
+			b.WriteRune(r)
+			continue
+		}
+		if unicode.IsControl(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+
+	return b.String()
 }

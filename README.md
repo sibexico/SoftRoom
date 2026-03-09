@@ -68,7 +68,12 @@ To set up federation, edit your `softroom.ini` file and add the servers you want
 [federation]
 # List of other SoftRoom servers to connect to
 servers = server1.example.com:2222, server2.example.com:2222
+known_hosts_path = ./federation_known_hosts
+shared_secret = CHANGE_ME_TO_A_LONG_RANDOM_SECRET
 ```
+
+`known_hosts_path` must point to an OpenSSH `known_hosts` file that contains host keys for all configured federation servers.
+`shared_secret` must be the same strong random value on every server in the federation.
 
 Each server in the federation must:
 1. Be accessible via SSH on the specified port

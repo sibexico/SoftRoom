@@ -4,21 +4,24 @@ import (
 	"io"
 	"log"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gliderlabs/ssh"
 )
 
 type Client struct {
-	hub      *Hub
-	user     string // Username
-	isAuthed bool   // True if authenticated via GitHub
-	session  ssh.Session
-	input    io.Reader
-	output   io.Writer
-	send     chan Message
-	program  *tea.Program // BubbleTea instance.
-	mu       sync.RWMutex
+	hub             *Hub
+	user            string // Username
+	isAuthed        bool   // True if authenticated via GitHub
+	session         ssh.Session
+	input           io.Reader
+	output          io.Writer
+	send            chan Message
+	program         *tea.Program // BubbleTea instance.
+	authInProgress  bool
+	lastAuthAttempt time.Time
+	mu              sync.RWMutex
 }
 
 func NewClient(session ssh.Session, hub *Hub, user string, input io.Reader, output io.Writer) *Client {
@@ -89,5 +92,40 @@ func (c *Client) RunTUI(width, height int, welcomeMsg string, cfg *Config) {
 func (c *Client) writePump() {
 	for msg := range c.send {
 		c.program.Send(incomingMessageMsg(msg))
+	}
+}
+
+func (c *Client) StartAuthAttempt(cooldown time.Duration) (bool, time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	if c.authInProgress {
+		return false, 0
+	}
+
+	if !c.lastAuthAttempt.IsZero() {
+		elapsed := now.Sub(c.lastAuthAttempt)
+		if elapsed < cooldown {
+			return false, cooldown - elapsed
+		}
+	}
+
+	c.authInProgress = true
+	c.lastAuthAttempt = now
+	return true, 0
+}
+
+func (c *Client) FinishAuthAttempt() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.authInProgress = false
+}
+
+func (c *Client) EnqueueMessage(msg Message) {
+	select {
+	case c.send <- msg:
+	default:
+		log.Printf("Dropping message for %s: send queue is full", c.User())
 	}
 }
