@@ -285,12 +285,10 @@ func (sc *ServerConnection) Connect() {
 	log.Printf("Successfully connected to federated server at %s", sc.addr)
 
 	go func() {
-		select {
-		case <-time.After(federationAuthTimeout):
-			if !sc.isAuthenticated() {
-				log.Printf("Closing unauthenticated outbound federation session to %s after timeout", sc.addr)
-				_ = session.Close()
-			}
+		time.Sleep(federationAuthTimeout)
+		if !sc.isAuthenticated() {
+			log.Printf("Closing unauthenticated outbound federation session to %s after timeout", sc.addr)
+			_ = session.Close()
 		}
 	}()
 
