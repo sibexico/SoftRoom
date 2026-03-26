@@ -4,12 +4,15 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/gliderlabs/ssh"
+	"github.com/charmbracelet/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
 	"gopkg.in/ini.v1"
 )
@@ -90,12 +93,16 @@ known_hosts_path = ./federation_known_hosts
 ; Shared secret used to authenticate federation messages between trusted servers.
 shared_secret = CHANGE_ME_TO_A_LONG_RANDOM_SECRET
 `
-	return os.WriteFile(path, []byte(strings.TrimSpace(content)), 0600)
+	return writeFileWithRoot(path, []byte(strings.TrimSpace(content)), 0600)
 }
 
 func getHostKey(path string) ssh.Signer {
-	keyData, err := os.ReadFile(path)
+	keyData, err := readFileWithRoot(path)
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Fatalf("Failed to read host key: %v", err)
+		}
+
 		log.Printf("Host key not found at %s. Generating a new one.", path)
 		// Generate a new ed25519 key pair
 		_, privKey, err := ed25519.GenerateKey(rand.Reader)
@@ -111,7 +118,7 @@ func getHostKey(path string) ssh.Signer {
 		pemBytes := pem.EncodeToMemory(pemBlock)
 
 		// Write the new key to the file
-		if err := os.WriteFile(path, pemBytes, 0600); err != nil {
+		if err := writeFileWithRoot(path, pemBytes, 0600); err != nil {
 			log.Fatalf("Failed to write new host key: %v", err)
 		}
 		log.Printf("New host key saved to %s", path)
@@ -123,6 +130,54 @@ func getHostKey(path string) ssh.Signer {
 		log.Fatalf("Failed to parse host key: %v", err)
 	}
 	return signer
+}
+
+func readFileWithRoot(path string) ([]byte, error) {
+	root, name, err := openRootForPath(path)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return io.ReadAll(f)
+}
+
+func writeFileWithRoot(path string, data []byte, perm os.FileMode) error {
+	root, name, err := openRootForPath(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func openRootForPath(path string) (*os.Root, string, error) {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return root, base, nil
 }
 
 // marshalED25519PrivateKey is a helper to encode ed25519 private key into the OpenSSH format

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/gliderlabs/ssh"
+	"github.com/charmbracelet/ssh"
 )
 
 type Client struct {
@@ -86,7 +86,7 @@ func (c *Client) RunTUI(width, height int, welcomeMsg string, cfg *Config) {
 		_ = closer.Close()
 	}
 
-	c.session.Close()
+	_ = c.session.Close()
 }
 
 func (c *Client) writePump() {

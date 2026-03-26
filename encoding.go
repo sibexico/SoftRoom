@@ -4,7 +4,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/gliderlabs/ssh"
+	"github.com/charmbracelet/ssh"
 	"golang.org/x/text/encoding/htmlindex"
 	"golang.org/x/text/transform"
 )

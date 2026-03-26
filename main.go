@@ -12,14 +12,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gliderlabs/ssh"
+	"github.com/charmbracelet/ssh"
 )
 
 func main() {
 	configPath := flag.String("c", "softroom.ini", "path to config file")
 	flag.Parse()
+	workingDir := mustGetwd()
 
-	safeConfigPath, err := sanitizePathInBase(*configPath, mustGetwd(), "config file path")
+	safeConfigPath, err := sanitizePathInBase(*configPath, workingDir, "config file path")
 	if err != nil {
 		log.Fatalf("Invalid config path: %v", err)
 	}
@@ -51,7 +52,7 @@ func main() {
 	cfg.Federation.KnownHostsPath = safeKnownHostsPath
 
 	hub := newHub()
-	federation, err := NewFederation(hub, cfg.Federation.Servers, cfg.Federation.KnownHostsPath, cfg.Federation.SharedSecret)
+	federation, err := NewFederation(hub, cfg.Federation.Servers, safeKnownHostsPath, cfg.Federation.SharedSecret)
 	if err != nil {
 		log.Fatalf("Failed to initialize federation: %v", err)
 	}
@@ -69,7 +70,7 @@ func main() {
 		pty, _, active := s.Pty()
 		if !active {
 			fmt.Fprintln(s, "A PTY is required to run SoftRoom.")
-			s.Close()
+			_ = s.Close()
 			return
 		}
 
@@ -98,7 +99,7 @@ func main() {
 			return true
 		},
 		HostSigners: []ssh.Signer{
-			getHostKey(cfg.Server.HostKeyPath),
+			getHostKey(safeHostKeyPath),
 		},
 	}
 
@@ -142,6 +143,12 @@ func sanitizePathInBase(inputPath, baseDir, fieldName string) (string, error) {
 		return "", fmt.Errorf("resolve base directory: %w", err)
 	}
 
+	if resolvedBase, err := filepath.EvalSymlinks(absBase); err == nil {
+		absBase = resolvedBase
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("resolve base symlinks: %w", err)
+	}
+
 	if !filepath.IsAbs(cleaned) {
 		cleaned = filepath.Join(absBase, cleaned)
 	}
@@ -151,7 +158,29 @@ func sanitizePathInBase(inputPath, baseDir, fieldName string) (string, error) {
 		return "", fmt.Errorf("resolve %s: %w", fieldName, err)
 	}
 
-	relPath, err := filepath.Rel(absBase, absPath)
+	relativeCheckPath := absPath
+	if info, err := os.Lstat(absPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("%s cannot be a symlink", fieldName)
+		}
+		if resolvedPath, err := filepath.EvalSymlinks(absPath); err == nil {
+			relativeCheckPath = resolvedPath
+		} else {
+			return "", fmt.Errorf("resolve %s symlinks: %w", fieldName, err)
+		}
+	} else if os.IsNotExist(err) {
+		parent := filepath.Dir(absPath)
+		resolvedParent, err := filepath.EvalSymlinks(parent)
+		if err == nil {
+			relativeCheckPath = filepath.Join(resolvedParent, filepath.Base(absPath))
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("resolve parent for %s: %w", fieldName, err)
+		}
+	} else {
+		return "", fmt.Errorf("lstat %s: %w", fieldName, err)
+	}
+
+	relPath, err := filepath.Rel(absBase, relativeCheckPath)
 	if err != nil {
 		return "", fmt.Errorf("validate %s: %w", fieldName, err)
 	}

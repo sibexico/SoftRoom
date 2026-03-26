@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gliderlabs/ssh"
+	"github.com/charmbracelet/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -96,7 +96,13 @@ func ensureKnownHostsFile(path string) error {
 		return err
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	f, err := root.OpenFile(filepath.Base(path), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		if os.IsExist(err) {
 			return nil
@@ -465,6 +471,7 @@ func (sc *ServerConnection) sendNameChange(oldName, newName string, isGitHubAuth
 
 func (sc *ServerConnection) sendAuth() error {
 	payload := AuthPayload{Secret: sc.sharedSecret}
+	// #nosec G117 -- Field name is part of the federation protocol schema.
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return err
