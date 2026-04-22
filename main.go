@@ -75,9 +75,6 @@ func main() {
 		}
 
 		sio := buildSessionIO(s)
-		if !sio.charsetKnown {
-			fmt.Fprintln(s, "Warning: Unknown terminal charset. Set LANG/LC_CTYPE to UTF-8 for correct non-Latin messages.")
-		}
 
 		initialName := generateAnonymousName()
 		client := NewClient(s, hub, "", sio.input, sio.output)

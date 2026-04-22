@@ -1,108 +1,146 @@
-# This workflow builds and releases the SoftRoom server on every push to the main branch.
-name: Build and Release
+name: Release Builds
 
 on:
-  push:
-    branches:
-      - main
+  release:
+    types: [published]
+
+permissions:
+  contents: write
 
 jobs:
-  build-and-release:
-    name: Build and Release
+  test-and-update-badges:
+    if: startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
-    # Grant permissions to create releases and delete old ones.
-    permissions:
-      contents: write
+
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests with coverage
+        id: tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./... -coverprofile=coverage.out -covermode=atomic
+
+      - name: Build badges and update README
+        id: badges
+        shell: bash
+        env:
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ steps.tests.outcome }}" == "success" ]]; then
+            test_status="Passed"
+            test_color="green"
+          else
+            test_status="Failed"
+            test_color="red"
+          fi
+
+          coverage="0.0"
+          if [[ -f coverage.out ]]; then
+            coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')"
+          fi
+          coverage="$(awk -v c="$coverage" 'BEGIN {printf "%.1f", c + 0}')"
+
+          if awk -v c="$coverage" 'BEGIN {exit !(c >= 70)}'; then
+            coverage_color="green"
+          elif awk -v c="$coverage" 'BEGIN {exit !(c >= 50)}'; then
+            coverage_color="yellow"
+          else
+            coverage_color="red"
+          fi
+
+          coverage_label="${coverage}%25"
+          test_badge="https://img.shields.io/badge/Tests-${test_status}-${test_color}?labelColor=gray&logo=github"
+          coverage_badge="https://img.shields.io/badge/Tests%20Coverage-${coverage_label}-${coverage_color}?labelColor=gray&logo=gitextensions"
+
+          test_line="[![Tests passed](${test_badge})](${RUN_URL})"
+          coverage_line=" [![Tests coverage](${coverage_badge})](${RUN_URL})"
+
+          awk -v test_line="$test_line" -v coverage_line="$coverage_line" '
+            {
+              if ($0 ~ /\[Tests passed\]/) {
+                print test_line
+                next
+              }
+              if ($0 ~ /\[Tests coverage\]/) {
+                print coverage_line
+                next
+              }
+              print
+            }
+          ' README.md > README.tmp && mv README.tmp README.md
+
+      - name: Commit README badge updates
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- README.md; then
+            echo "README.md already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: update release test and coverage badges"
+          git push
+
+      - name: Report failed tests for badges
+        if: steps.tests.outcome != 'success'
+        shell: bash
+        run: echo "Tests failed in badge job; badges were updated to reflect failure."
+
+  build-and-release:
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Parse Version from Commit
-        id: get_version
-        run: |
-          # The full commit message is available in the github context
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-          echo "Commit message: $COMMIT_MSG"
-
-          # Use a regular expression to find the version number (e.g., 1.2.3)
-          # We add '|| true' to prevent the step from failing if grep finds no match.
-          VERSION=$(echo "$COMMIT_MSG" | grep -oP '(\d+\.\d+\.\d+)' || true)
-
-          # Check if the commit message contains the word "STABLE"
-          IS_STABLE="false"
-          if echo "$COMMIT_MSG" | grep -q "STABLE"; then
-            IS_STABLE="true"
-          fi
-
-          # If no version is found, we stop the workflow gracefully.
-          if [ -z "$VERSION" ]; then
-            echo "No version found in commit message. Skipping release."
-            echo "VERSION=" >> $GITHUB_OUTPUT
-          else
-            echo "Version found: $VERSION"
-            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-            echo "IS_STABLE=$IS_STABLE" >> $GITHUB_OUTPUT
-          fi
-
-      # This step only runs if a version was successfully parsed from the commit.
       - name: Set up Go
-        if: steps.get_version.outputs.VERSION != ''
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.1'
+          go-version-file: go.mod
 
-      # Build binaries for both Windows and Linux.
-      - name: Build for Windows and Linux
-        if: steps.get_version.outputs.VERSION != ''
+      - name: Parse version from release tag
+        id: version
+        shell: bash
         run: |
-          go mod tidy
-          GOOS=linux GOARCH=amd64 go build -o softroom-linux-amd64
-          GOOS=windows GOARCH=amd64 go build -o softroom-windows-amd64.exe
+          set -euo pipefail
+          raw="${{ github.event.release.tag_name }}"
+          version="${raw#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$raw' is invalid. Expected vX.Y.Z"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build for Windows and Linux
+        run: |
+          set -euo pipefail
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o softroom-linux-amd64
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o softroom-windows-amd64.exe
           echo "Build complete."
 
-      # Create a new GitHub Release and upload the binaries as assets.
-      - name: Create GitHub Release
-        if: steps.get_version.outputs.VERSION != ''
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          # The release tag will be vX.Y.Z (e.g., v0.0.1)
-          tag_name: v${{ steps.get_version.outputs.VERSION }}
-          # The release name will include "(STABLE)" if the commit message had it.
-          name: Release ${{ steps.get_version.outputs.VERSION }} ${{ steps.get_version.outputs.IS_STABLE == 'true' && '(STABLE)' || '' }}
+          tag_name: ${{ github.event.release.tag_name }}
           files: |
             softroom-linux-amd64
             softroom-windows-amd64.exe
-
-      # This step cleans up old releases based on your rules.
-      # It runs after the new release is created.
-      - name: Prune Old Releases
-        if: always() && steps.get_version.outputs.VERSION != ''
-        env:
-          # The GITHUB_TOKEN is required for API access.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Pruning old releases..."
-          
-          # Get lists of tags to keep using GitHub CLI and jq
-          STABLE_TO_KEEP=$(gh release list --limit 100 --json name,tagName | jq -r '.[] | select(.name | contains("STABLE")) | .tagName' | head -n 1)
-          RECENT_TO_KEEP=$(gh release list --limit 100 --json tagName,createdAt | jq -r 'sort_by(.createdAt) | reverse | .[].tagName' | head -n 2)
-
-          # Combine the lists and get a unique, sorted list of tags to keep
-          KEEP_LIST=$(printf "%s\n%s" "$STABLE_TO_KEEP" "$RECENT_TO_KEEP" | sort -u)
-          echo "Releases to keep:"
-          echo "$KEEP_LIST"
-          
-          # Get all versioned releases that are candidates for deletion
-          ALL_RELEASES=$(gh release list --limit 100 --json tagName | jq -r '.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tagName')
-
-          # Loop through all releases and delete any that are not in our "keep" list
-          for tag in $ALL_RELEASES; do
-            if ! echo "$KEEP_LIST" | grep -q -w "$tag"; then
-              echo "Deleting old release: $tag"
-              gh release delete "$tag" --yes
-            fi
-          done
-          
-          echo "Cleanup complete."
 
